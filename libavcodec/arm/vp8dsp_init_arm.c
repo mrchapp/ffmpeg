@@ -53,12 +53,12 @@ av_cold void ff_vp8dsp_init_arm(VP8DSPContext *dsp)
         dsp->vp8_v_loop_filter8uv = vp8_v_loop_filter8uv_neon;
         dsp->vp8_h_loop_filter8uv = vp8_h_loop_filter8uv_neon;
 
-#if 0
         dsp->vp8_v_loop_filter16y_inner = vp8_v_loop_filter16y_inner_neon;
         dsp->vp8_h_loop_filter16y_inner = vp8_h_loop_filter16y_inner_neon;
         dsp->vp8_v_loop_filter8uv_inner = vp8_v_loop_filter8uv_inner_neon;
         dsp->vp8_h_loop_filter8uv_inner = vp8_h_loop_filter8uv_inner_neon;
 
+#if 0
         dsp->vp8_v_loop_filter_simple = vp8_v_loop_filter_simple_neon;
         dsp->vp8_h_loop_filter_simple = vp8_h_loop_filter_simple_neon;
 #endif

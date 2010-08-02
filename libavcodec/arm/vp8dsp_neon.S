@@ -44,7 +44,7 @@
 @ TODO: maybe split this into parts so some can be shared by other lf
 @ functions?
 @
-.macro  vp8_loop_filter
+.macro  vp8_loop_filter, inner=0
         @ calculate hev and normal_limit:
         vabd.u8         q12, q2,  q3            @ abs(P1-P0)
         vabd.u8         q13, q5,  q4            @ abs(Q1-Q0)
@@ -92,18 +92,18 @@
         vmov.i16        q12, #3
         vsubl.s8        q10, d8,  d6            @ QS0 - PS0
         vsubl.s8        q11, d9,  d7            @   (widened to 16bit)
-        vmul.i16        q10, q10, q12           @ 3 * (QS0 - PS0)
+        vmul.i16        q10, q10, q12           @ w = 3 * (QS0 - PS0)
         vmul.i16        q11, q11, q12
 
         vmov.i8         q14, #4
         vmov.i8         q15, #3
 
         vqsub.s8        q12, q2,  q5            @ clamp(PS1-QS1)
-        @ for simple filter, or inner filter where !hev, this should be
-        @ zero.. ie. !use_outer_taps case
-
-        vaddw.s8        q10, q10, d24           @ w = (3*(QS0-PS0)) + clamp(PS1-QS1)
-        vaddw.s8        q11, q11, d25           @   (widened to 16bit)
+    .if \inner
+        vand            q12, q12, q9            @ if(hev) w += clip(PS1-QS1)
+    .endif
+        vaddw.s8        q10, q10, d24           @ w += clamp(PS1-QS1)
+        vaddw.s8        q11, q11, d25
         vqmovn.s16      d20, q10                @ narrow result back into q10
         vqmovn.s16      d21, q11
         vand            q10, q10, q8            @ w &= normal_limit
@@ -119,18 +119,36 @@
         @   q15 -> #3
         @   q8, q11, q12 -> unused
 
-        @ filter_common:
+        @ filter_common:   is4tap==1
         @   c1 = clamp(w + 4) >> 3;
         @   c2 = clamp(w + 3) >> 3;
         @   Q0 = s2u(QS0 - c1);
         @   P0 = s2u(PS0 + c2);
+    .if \inner
+        @ filter_common is unconditional in inner blocks
+        vand            q12, q10
+    .else
         vand            q12, q10, q9            @ w & hev
+    .endif
         vqadd.s8        q11, q12, q14           @ c1 = clamp((w&hev)+4)
         vqadd.s8        q12, q12, q15           @ c2 = clamp((w&hev)+3)
         vshr.s8         q11, q11, #3            @ c1 >>= 3
         vshr.s8         q12, q12, #3            @ c2 >>= 3
         vqsub.s8        q4,  q4,  q11           @ QS0 = clamp(QS0-c1)
         vqadd.s8        q3,  q3,  q12           @ PS0 = clamp(PS0+c2)
+
+    .if \inner
+        @ the !is4tap case of filter_common, only used for inner blocks
+        @   c3 = ((c1&~hev) + 1) >> 1;
+        @   Q1 = s2u(QS1 - c3);
+        @   P1 = s2u(PS1 + c3);
+        vbic            q11, q11, q9            @ c1 & ~hev
+        vmov.i8         q15, #1
+        vadd.s8         q11, q11, q15           @ c3 = ((c1&~hev) + 1)
+        vshr.s8         q11, q11, #1            @ c3 >>= 1
+        vqsub.s8        q5,  q5,  q11           @ QS1 = clamp(QS1-c3)
+        vqadd.s8        q2,  q2,  q11           @ PS1 = clamp(PS1+c3)
+    .else
 
         @ filter_mbedge:
         @   a = clamp((27*w + 63) >> 7);
@@ -170,6 +188,7 @@
         vqshrn.s16      d23, q14, #7
         vqsub.s8        q6,  q6,  q11           @ QS2 = clamp(QS2-a)
         vqadd.s8        q1,  q1,  q11           @ PS2 = clamp(PS2+a)
+    .endif
 
         @ convert back to unsigned value:
         veor            q1,  q1,  q13           @ P2 = PS2 ^ 0x80
@@ -221,6 +240,44 @@ function vp8_v_loop_filter16y_neon, export=1
         vdup.8          q15, r3                 @ flim_I
 
         vp8_loop_filter
+
+        @ back up to P2:  dst -= stride * 6
+        sub             r0,  r0,  r1,  lsl #2
+        sub             r0,  r0,  r1,  lsl #1
+
+        @ Store pixels:
+        vst1.8          {q1},     [r0], r1      @ P2
+        vst1.8          {q2},     [r0], r1      @ P1
+        vst1.8          {q3},     [r0], r1      @ P0
+        vst1.8          {q4},     [r0], r1      @ Q0
+        vst1.8          {q5},     [r0], r1      @ Q1
+        vst1.8          {q6},     [r0]          @ Q2
+
+        bx              lr
+endfunc
+@}
+
+@void vp8_v_loop_filter16y_inner_neon(uint8_t *dst, int stride,
+@        int flim_E, int flim_I, int hev_thresh)
+@{
+function vp8_v_loop_filter16y_inner_neon, export=1
+        sub             r0,  r0,  r1,  lsl #2   @ subtract 4 rows
+        ldr             r12, [sp, #0]           @ load hev_thresh from stack
+
+        @ Load pixels:
+        vld1.8          {q0},     [r0], r1      @ P3
+        vld1.8          {q1},     [r0], r1      @ P2
+        vld1.8          {q2},     [r0], r1      @ P1
+        vld1.8          {q3},     [r0], r1      @ P0
+        vld1.8          {q4},     [r0], r1      @ Q0
+        vld1.8          {q5},     [r0], r1      @ Q1
+        vld1.8          {q6},     [r0], r1      @ Q2
+        vld1.8          {q7},     [r0]          @ Q3
+
+        vdup.8          q14, r2                 @ flim_E
+        vdup.8          q15, r3                 @ flim_I
+
+        vp8_loop_filter, inner=1
 
         @ back up to P2:  dst -= stride * 6
         sub             r0,  r0,  r1,  lsl #2
@@ -294,16 +351,60 @@ function vp8_v_loop_filter8uv_neon, export=1
 endfunc
 @}
 
-@ Filter vertical edges within the macroblock:
-@
-@void vp8_v_loop_filter16y_inner_neon(uint8_t *dst, int stride,
-@        int flim_E, int flim_I, int hev_thresh)
-@{
-@}
-
 @void vp8_v_loop_filter8uv_inner_neon(uint8_t *dstU, uint8_t *dstV, int stride,
 @        int flim_E, int flim_I, int hev_thresh)
 @{
+function vp8_v_loop_filter8uv_inner_neon, export=1
+        sub             r0,  r0,  r2,  lsl #2   @ subtract 4 rows from u
+        sub             r1,  r1,  r2,  lsl #2   @ subtract 4 rows from v
+        ldr             r12, [sp, #0]           @ load flim_I from stack
+
+        @ Load pixels:
+        vld1.8          {d0},     [r0], r2      @ P3
+        vld1.8          {d1},     [r1], r2      @ P3
+        vld1.8          {d2},     [r0], r2      @ P2
+        vld1.8          {d3},     [r1], r2      @ P2
+        vld1.8          {d4},     [r0], r2      @ P1
+        vld1.8          {d5},     [r1], r2      @ P1
+        vld1.8          {d6},     [r0], r2      @ P0
+        vld1.8          {d7},     [r1], r2      @ P0
+        vld1.8          {d8},     [r0], r2      @ Q0
+        vld1.8          {d9},     [r1], r2      @ Q0
+        vld1.8          {d10},    [r0], r2      @ Q1
+        vld1.8          {d11},    [r1], r2      @ Q1
+        vld1.8          {d12},    [r0], r2      @ Q2
+        vld1.8          {d13},    [r1], r2      @ Q2
+        vld1.8          {d14},    [r0]          @ Q3
+        vld1.8          {d15},    [r1]          @ Q3
+
+        vdup.8          q14, r3                 @ flim_E
+        vdup.8          q15, r12                @ flim_I
+        ldr             r12, [sp, #4]           @ hev_thresh
+
+        vp8_loop_filter, inner=1
+
+        @ back up to P2:  u -= stride * 6
+        sub             r0,  r0,  r2,  lsl #2
+        sub             r0,  r0,  r2,  lsl #1
+
+        @ back up to P2:  v -= stride * 6
+        sub             r1,  r1,  r2,  lsl #2
+        sub             r1,  r1,  r2,  lsl #1
+
+        @ Store pixels:
+        vst1.8          {d2},     [r0], r2      @ P2
+        vst1.8          {d3},     [r1], r2      @ P2
+        vst1.8          {d4},     [r0], r2      @ P1
+        vst1.8          {d5},     [r1], r2      @ P1
+        vst1.8          {d6},     [r0], r2      @ P0
+        vst1.8          {d7},     [r1], r2      @ P0
+        vst1.8          {d8},     [r0], r2      @ Q0
+        vst1.8          {d9},     [r1], r2      @ Q0
+        vst1.8          {d10},    [r0]          @ Q1
+        vst1.8          {d11},    [r1]          @ Q1
+
+        bx              lr
+endfunc
 @}
 
 @void vp8_v_loop_filter_simple_neon(uint8_t *dst, int stride, int flim)
@@ -343,6 +444,64 @@ function vp8_h_loop_filter16y_neon, export=1
         vdup.8          q15, r3                 @ flim_I
 
         vp8_loop_filter
+
+        sub             r0,  r0,  r1, lsl #4    @ backup 16 rows
+
+        transpose8x16matrix
+
+        @ Store pixels:
+        vst1.8          {d0},     [r0],     r1
+        vst1.8          {d2},     [r0],     r1
+        vst1.8          {d4},     [r0],     r1
+        vst1.8          {d6},     [r0],     r1
+        vst1.8          {d8},     [r0],     r1
+        vst1.8          {d10},    [r0],     r1
+        vst1.8          {d12},    [r0],     r1
+        vst1.8          {d14},    [r0],     r1
+        vst1.8          {d1},     [r0],     r1
+        vst1.8          {d3},     [r0],     r1
+        vst1.8          {d5},     [r0],     r1
+        vst1.8          {d7},     [r0],     r1
+        vst1.8          {d9},     [r0],     r1
+        vst1.8          {d11},    [r0],     r1
+        vst1.8          {d13},    [r0],     r1
+        vst1.8          {d15},    [r0]
+
+        bx              lr
+endfunc
+@}
+
+@void vp8_h_loop_filter16y_inner_neon(uint8_t *dst, int stride,
+@        int flim_E, int flim_I, int hev_thresh)
+@{
+function vp8_h_loop_filter16y_inner_neon, export=1
+        sub             r0,  r0,  #4            @ subtract 4 cols
+        ldr             r12, [sp, #0]           @ load hev_thresh from stack
+
+        @ Load pixels:
+        vld1.8          {d0},     [r0], r1      @ load first 8-line src data
+        vld1.8          {d2},     [r0], r1
+        vld1.8          {d4},     [r0], r1
+        vld1.8          {d6},     [r0], r1
+        vld1.8          {d8},     [r0], r1
+        vld1.8          {d10},    [r0], r1
+        vld1.8          {d12},    [r0], r1
+        vld1.8          {d14},    [r0], r1
+        vld1.8          {d1},     [r0], r1      @ load second 8-line src data
+        vld1.8          {d3},     [r0], r1
+        vld1.8          {d5},     [r0], r1
+        vld1.8          {d7},     [r0], r1
+        vld1.8          {d9},     [r0], r1
+        vld1.8          {d11},    [r0], r1
+        vld1.8          {d13},    [r0], r1
+        vld1.8          {d15},    [r0], r1
+
+        transpose8x16matrix
+
+        vdup.8          q14, r2                 @ flim_E
+        vdup.8          q15, r3                 @ flim_I
+
+        vp8_loop_filter, inner=1
 
         sub             r0,  r0,  r1, lsl #4    @ backup 16 rows
 
@@ -428,16 +587,68 @@ function vp8_h_loop_filter8uv_neon, export=1
         vst1.8          {d15},    [r1]
 
         bx              lr
-@}
-
-@void vp8_h_loop_filter16y_inner_neon(uint8_t *dst, int stride,
-@        int flim_E, int flim_I, int hev_thresh)
-@{
+endfunc
 @}
 
 @void vp8_h_loop_filter8uv_inner_neon(uint8_t *dstU, uint8_t *dstV, int stride,
 @        int flim_E, int flim_I, int hev_thresh)
 @{
+function vp8_h_loop_filter8uv_inner_neon, export=1
+        sub             r0,  r0,  #4            @ subtract 4 cols from u
+        sub             r1,  r1,  #4            @ subtract 4 rows from v
+        ldr             r12, [sp, #0]           @ load flim_I from stack
+
+        @ Load pixels:
+        vld1.8          {d0},     [r0], r2      @ load u
+        vld1.8          {d1},     [r1], r2      @ load v
+        vld1.8          {d2},     [r0], r2
+        vld1.8          {d3},     [r1], r2
+        vld1.8          {d4},     [r0], r2
+        vld1.8          {d5},     [r1], r2
+        vld1.8          {d6},     [r0], r2
+        vld1.8          {d7},     [r1], r2
+        vld1.8          {d8},     [r0], r2
+        vld1.8          {d9},     [r1], r2
+        vld1.8          {d10},    [r0], r2
+        vld1.8          {d11},    [r1], r2
+        vld1.8          {d12},    [r0], r2
+        vld1.8          {d13},    [r1], r2
+        vld1.8          {d14},    [r0], r2
+        vld1.8          {d15},    [r1], r2
+
+        transpose8x16matrix
+
+        vdup.8          q14, r3                 @ flim_E
+        vdup.8          q15, r12                @ flim_I
+        ldr             r12, [sp, #4]           @ hev_thresh
+
+        vp8_loop_filter, inner=1
+
+        sub             r0,  r0,  r2, lsl #3    @ backup u 8 rows
+        sub             r1,  r1,  r2, lsl #3    @ backup v 8 rows
+
+        transpose8x16matrix
+
+        @ Store pixels:
+        vst1.8          {d0},     [r0], r2
+        vst1.8          {d1},     [r1], r2
+        vst1.8          {d2},     [r0], r2
+        vst1.8          {d3},     [r1], r2
+        vst1.8          {d4},     [r0], r2
+        vst1.8          {d5},     [r1], r2
+        vst1.8          {d6},     [r0], r2
+        vst1.8          {d7},     [r1], r2
+        vst1.8          {d8},     [r0], r2
+        vst1.8          {d9},     [r1], r2
+        vst1.8          {d10},    [r0], r2
+        vst1.8          {d11},    [r1], r2
+        vst1.8          {d12},    [r0], r2
+        vst1.8          {d13},    [r1], r2
+        vst1.8          {d14},    [r0]
+        vst1.8          {d15},    [r1]
+
+        bx              lr
+endfunc
 @}
 
 @void vp8_h_loop_filter_simple_neon(uint8_t *dst, int stride, int flim)
