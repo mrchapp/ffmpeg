@@ -65,7 +65,7 @@
         vand            q8,  q8,  q11
         vabd.u8         q9,  q3,  q4            @ abs(P0-Q0)
         vabd.u8         q10, q2,  q5            @ abs(P1-Q1)
-        vshl.u8         q9,  q9,  #1            @ abs(P0-Q0) * 2
+        vqadd.u8        q9,  q9,  q9            @ abs(P0-Q0) * 2
         vshr.u8         q10, q10, #1            @ abs(P1-Q1) / 2
         vqadd.u8        q11, q9,  q10           @ (abs(P0-Q0)*2) + (abs(P1-Q1)/2)
         vcle.u8         q11, q11, q14           @ (abs(P0-Q0)*2) + (abs(P1-Q1)/2) <= flim_E
@@ -82,12 +82,16 @@
         @   q9: hev
 
         @ convert to signed value:
+    .if ! \inner
         veor            q1,  q1,  q13           @ PS2 = P2 ^ 0x80
+    .endif
         veor            q2,  q2,  q13           @ PS1 = P1 ^ 0x80
         veor            q3,  q3,  q13           @ PS0 = P0 ^ 0x80
         veor            q4,  q4,  q13           @ QS0 = Q0 ^ 0x80
         veor            q5,  q5,  q13           @ QS1 = Q1 ^ 0x80
+    .if ! \inner
         veor            q6,  q6,  q13           @ QS2 = Q2 ^ 0x80
+    .endif
 
         vmov.i16        q12, #3
         vsubl.s8        q10, d8,  d6            @ QS0 - PS0
@@ -100,7 +104,7 @@
 
         vqsub.s8        q12, q2,  q5            @ clamp(PS1-QS1)
     .if \inner
-        vand            q12, q12, q9            @ if(hev) w += clip(PS1-QS1)
+        vand            q12, q12, q9            @ if(hev) w += clamp(PS1-QS1)
     .endif
         vaddw.s8        q10, q10, d24           @ w += clamp(PS1-QS1)
         vaddw.s8        q11, q11, d25
@@ -126,7 +130,7 @@
         @   P0 = s2u(PS0 + c2);
     .if \inner
         @ filter_common is unconditional in inner blocks
-        vand            q12, q10
+        vmov            q12, q10
     .else
         vand            q12, q10, q9            @ w & hev
     .endif
@@ -191,12 +195,16 @@
     .endif
 
         @ convert back to unsigned value:
+    .if ! \inner
         veor            q1,  q1,  q13           @ P2 = PS2 ^ 0x80
+    .endif
         veor            q2,  q2,  q13           @ P1 = PS1 ^ 0x80
         veor            q3,  q3,  q13           @ P0 = PS0 ^ 0x80
         veor            q4,  q4,  q13           @ Q0 = QS0 ^ 0x80
         veor            q5,  q5,  q13           @ Q1 = QS1 ^ 0x80
+    .if ! \inner
         veor            q6,  q6,  q13           @ Q2 = QS2 ^ 0x80
+    .endif
 .endm
 
 @ macro to transpose q0..q7 for h filter variants
@@ -344,8 +352,10 @@ function vp8_v_loop_filter8uv_neon, export=1
         vst1.8          {d7},     [r1], r2      @ P0
         vst1.8          {d8},     [r0], r2      @ Q0
         vst1.8          {d9},     [r1], r2      @ Q0
-        vst1.8          {d10},    [r0]          @ Q1
-        vst1.8          {d11},    [r1]          @ Q1
+        vst1.8          {d10},    [r0], r2      @ Q1
+        vst1.8          {d11},    [r1], r2      @ Q1
+        vst1.8          {d12},    [r0]          @ Q2
+        vst1.8          {d13},    [r1]          @ Q2
 
         bx              lr
 endfunc
@@ -400,8 +410,10 @@ function vp8_v_loop_filter8uv_inner_neon, export=1
         vst1.8          {d7},     [r1], r2      @ P0
         vst1.8          {d8},     [r0], r2      @ Q0
         vst1.8          {d9},     [r1], r2      @ Q0
-        vst1.8          {d10},    [r0]          @ Q1
-        vst1.8          {d11},    [r1]          @ Q1
+        vst1.8          {d10},    [r0], r2      @ Q1
+        vst1.8          {d11},    [r1], r2      @ Q1
+        vst1.8          {d12},    [r0]          @ Q2
+        vst1.8          {d13},    [r1]          @ Q2
 
         bx              lr
 endfunc
