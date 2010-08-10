@@ -22,6 +22,10 @@
 
 #include "libavcodec/vp8dsp.h"
 
+void vp8_idct_dc_add_neon(uint8_t * dst, DCTELEM block[16], int stride);
+void vp8_idct_dc_add4uv_neon(uint8_t * dst, DCTELEM block[4][16], int stride);
+void vp8_idct_dc_add4y_neon(uint8_t * dst, DCTELEM block[4][16], int stride);
+
 void vp8_v_loop_filter16y_neon(uint8_t *dst, int stride,
         int flim_E, int flim_I, int hev_thresh);
 void vp8_h_loop_filter16y_neon(uint8_t *dst, int stride,
@@ -102,6 +106,10 @@ void put_vp8_epel8_h4v6_neon(uint8_t * dst, int dststride, uint8_t * src,
 av_cold void ff_vp8dsp_init_arm(VP8DSPContext *dsp)
 {
     if (HAVE_NEON) {
+        dsp->vp8_idct_dc_add = vp8_idct_dc_add_neon;
+        dsp->vp8_idct_dc_add4y = vp8_idct_dc_add4y_neon;
+        dsp->vp8_idct_dc_add4uv = vp8_idct_dc_add4uv_neon;
+
         dsp->vp8_v_loop_filter16y = vp8_v_loop_filter16y_neon;
         dsp->vp8_h_loop_filter16y = vp8_h_loop_filter16y_neon;
         dsp->vp8_v_loop_filter8uv = vp8_v_loop_filter8uv_neon;
