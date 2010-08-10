@@ -23,6 +23,149 @@
 
 #include "asm.S"
 
+@void vp8_idct_dc_add_neon(uint8_t * dst, DCTELEM block[16], int stride)
+@{
+function vp8_idct_dc_add_neon, export=1
+        mov             r3,  #0
+        ldrsh           r12, [r1]
+        strh            r3,  [r1]
+        add             r12, r12, #4
+        lsr             r12, r12, #3
+        vdup.16         q1,  r12
+        vld1.32         {d0[0]}, [r0], r2
+        vld1.32         {d0[1]}, [r0], r2
+        vld1.32         {d1[0]}, [r0], r2
+        vld1.32         {d1[1]}, [r0], r2
+        sub             r0,  r0,  r2, lsl #2
+        vaddw.u8        q2,  q1,  d0
+        vaddw.u8        q3,  q1,  d1
+        vqshrun.s16     d0,  q2,  #0
+        vqshrun.s16     d1,  q3,  #0
+        vst1.32         {d0[0]}, [r0], r2
+        vst1.32         {d0[1]}, [r0], r2
+        vst1.32         {d1[0]}, [r0], r2
+        vst1.32         {d1[1]}, [r0], r2
+        bx lr
+endfunc
+@}
+
+@void vp8_idct_dc_add4uv_neon(uint8_t * dst, DCTELEM block[4][16], int stride)
+@{
+function vp8_idct_dc_add4uv_neon, export=1
+        mov             r3,  #0
+        vmov.u16        q10, #4
+        ldrsh           r12, [r1, #0]           @ block[0][0]
+        strh            r3,  [r1, #0]
+        vdup.16         d16, r12
+        ldrsh           r12, [r1, #32]          @ block[1][0]
+        strh            r3,  [r1, #32]
+        vdup.16         d17, r12
+        ldrsh           r12, [r1, #64]          @ block[2][0]
+        strh            r3,  [r1, #64]
+        vdup.16         d18, r12
+        ldrsh           r12, [r1, #96]          @ block[3][0]
+        strh            r3,  [r1, #96]
+        vdup.16         d19, r12
+        vadd.s16        q8,  q8,  q10           @ dc += 4
+        vadd.s16        q9,  q9,  q10
+        vshr.s16        q8,  q8,  #3            @ dc >>= 3
+        vshr.s16        q9,  q9,  #3
+        add             r3,  r0,  r2,  lsl #2   @ dst2 = dst + 4 * stride
+
+        vld1.8          {d0},     [r0]
+        vld1.8          {d1},     [r3]
+        vaddw.u8        q1,  q8,  d0
+        vaddw.u8        q2,  q9,  d1
+        vqshrun.s16     d0,  q1,  #0
+        vqshrun.s16     d1,  q2,  #0
+        vst1.8          {d0},     [r0],     r2
+        vst1.8          {d1},     [r3],     r2
+
+        vld1.8          {d0},     [r0]
+        vld1.8          {d1},     [r3]
+        vaddw.u8        q1,  q8,  d0
+        vaddw.u8        q2,  q9,  d1
+        vqshrun.s16     d0,  q1,  #0
+        vqshrun.s16     d1,  q2,  #0
+        vst1.8          {d0},     [r0],     r2
+        vst1.8          {d1},     [r3],     r2
+
+        vld1.8          {d0},     [r0]
+        vld1.8          {d1},     [r3]
+        vaddw.u8        q1,  q8,  d0
+        vaddw.u8        q2,  q9,  d1
+        vqshrun.s16     d0,  q1,  #0
+        vqshrun.s16     d1,  q2,  #0
+        vst1.8          {d0},     [r0],     r2
+        vst1.8          {d1},     [r3],     r2
+
+        vld1.8          {d0},     [r0]
+        vld1.8          {d1},     [r3]
+        vaddw.u8        q1,  q8,  d0
+        vaddw.u8        q2,  q9,  d1
+        vqshrun.s16     d0,  q1,  #0
+        vqshrun.s16     d1,  q2,  #0
+        vst1.8          {d0},     [r0],     r2
+        vst1.8          {d1},     [r3],     r2
+
+        bx lr
+endfunc
+@}
+
+@void vp8_idct_dc_add4y_neon(uint8_t * dst, DCTELEM block[4][16], int stride)
+@{
+function vp8_idct_dc_add4y_neon, export=1
+        mov             r3,  #0
+        vmov.u16        q10, #4
+        ldrsh           r12, [r1, #0]           @ block[0][0]
+        strh            r3,  [r1, #0]
+        vdup.16         d16, r12
+        ldrsh           r12, [r1, #32]          @ block[1][0]
+        strh            r3,  [r1, #32]
+        vdup.16         d17, r12
+        ldrsh           r12, [r1, #64]          @ block[2][0]
+        strh            r3,  [r1, #64]
+        vdup.16         d18, r12
+        ldrsh           r12, [r1, #96]          @ block[3][0]
+        strh            r3,  [r1, #96]
+        vdup.16         d19, r12
+        vadd.s16        q8,  q8,  q10           @ dc += 4
+        vadd.s16        q9,  q9,  q10
+        vshr.s16        q8,  q8,  #3            @ dc >>= 3
+        vshr.s16        q9,  q9,  #3
+
+        vld1.8          {q0},     [r0]
+        vaddw.u8        q1,  q8,  d0
+        vaddw.u8        q2,  q9,  d1
+        vqshrun.s16     d0,  q1,  #0
+        vqshrun.s16     d1,  q2,  #0
+        vst1.8          {q0},     [r0],     r2
+
+        vld1.8          {q0},     [r0]
+        vaddw.u8        q1,  q8,  d0
+        vaddw.u8        q2,  q9,  d1
+        vqshrun.s16     d0,  q1,  #0
+        vqshrun.s16     d1,  q2,  #0
+        vst1.8          {q0},     [r0],     r2
+
+        vld1.8          {q0},     [r0]
+        vaddw.u8        q1,  q8,  d0
+        vaddw.u8        q2,  q9,  d1
+        vqshrun.s16     d0,  q1,  #0
+        vqshrun.s16     d1,  q2,  #0
+        vst1.8          {q0},     [r0],     r2
+
+        vld1.8          {q0},     [r0]
+        vaddw.u8        q1,  q8,  d0
+        vaddw.u8        q2,  q9,  d1
+        vqshrun.s16     d0,  q1,  #0
+        vqshrun.s16     d1,  q2,  #0
+        vst1.8          {q0},     [r0],     r2
+
+        bx lr
+endfunc
+@}
+
 @ Register layout:
 @   P3..Q3 -> q0..q7
 @   flim_E -> q14
